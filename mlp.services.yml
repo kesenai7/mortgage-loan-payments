@@ -1,0 +1,7 @@
+services:
+  logger.channel.mlp:
+    parent: logger.channel_base
+    arguments: ['mlp']
+  mlp.calculate:
+    class: Drupal\mlp\CalculateService
+    arguments: ['@logger.channel.mlp']

@@ -1,0 +1,9 @@
+name: Mortgage Loan Payments
+description: Calculator for Mortgage Loan Payments.
+package: Custom
+
+type: module
+core: 8.x
+
+dependencies:
+  - rest

@@ -1,0 +1,7 @@
+mlp.form:
+  path: '/mortgage-loan-payments'
+  defaults:
+    _form: '\Drupal\mlp\Form\CalculatorForm'
+    _title: 'Mortgage Loan Payments'
+  requirements:
+    _permission: 'access content'
