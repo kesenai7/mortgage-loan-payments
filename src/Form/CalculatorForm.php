@@ -186,9 +186,12 @@ class CalculatorForm extends FormBase {
           $results['scheduled_payment'],
           $results['scheduled_number_of_payments'],
           $results['actual_number_of_payments'],
-          $results['data']['total_early_payments'],
+          $results['total_early_payments'],
           $results['total_interest'],
         ],
+      ],
+      '#attributes' => [
+        'id' => 'loan_summary'
       ],
       '#weight' => '9',
     ];
@@ -209,6 +212,9 @@ class CalculatorForm extends FormBase {
         $this->t('Cumulative Interest'),
       ],
       '#rows' => $results['data']['payments_data'],
+      '#attributes' => [
+        'id' => 'payment_data'
+      ],
       '#weight' => '10',
     ];
   }

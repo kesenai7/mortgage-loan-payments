@@ -1,0 +1,10 @@
+id: loan_summary_resource
+plugin_id: loan_summary_resource
+granularity: resource
+configuration:
+  methods:
+    - GET
+  formats:
+    - json
+  authentication:
+    - cookie

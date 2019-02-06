@@ -38,14 +38,18 @@ class CalculateService implements CalculateServiceInterface {
    * $params['start_date_of_loan']  Start date of loan DrupalDateTime object.
    * $params['optional_extra_payments'] Optional extra payments float value.
    *
+   * @param bool $payments
+   * Include payments data (TRUE by default) or not (FALSE).
+   *
    * @return mixed
    */
-  public function calculate($params) {
+  public function calculate($params, $payments = TRUE) {
     // Calculate interest variable which will be reused.
     $interest = ($params['annual_interest_rate'] / $params['number_of_payments_per_year']) / 100;
 
     // Calculate Scheduled Payment.
-    $results['scheduled_payment'] = $this->calculateScheduledPayment($params['loan_period_in_years'], $params['number_of_payments_per_year'], $interest, $params['loan_amount']);
+    $scheduled_payment = $this->calculateScheduledPayment($params['loan_period_in_years'], $params['number_of_payments_per_year'], $interest, $params['loan_amount']);
+    $results['scheduled_payment'] = number_format($scheduled_payment, 2);
 
     // Calculate Scheduled Number of Payments.
     $results['scheduled_number_of_payments'] = $params['number_of_payments_per_year'] * $params['loan_period_in_years'];
@@ -53,7 +57,7 @@ class CalculateService implements CalculateServiceInterface {
     // Calculate list of payments.
     $data_args = [
       'loan_amount' => $params['loan_amount'],
-      'scheduled_payment' => $results['scheduled_payment'],
+      'scheduled_payment' => $scheduled_payment,
       'optional_extra_payments' => $params['optional_extra_payments'],
       'start_date_of_loan' => $params['start_date_of_loan'],
       'annual_interest_rate' => $params['annual_interest_rate'],
@@ -62,13 +66,42 @@ class CalculateService implements CalculateServiceInterface {
     ];
 
     $payments_data = $this->calculatePaymentsData($data_args);
-    $results['data'] = $payments_data;
+
+    // Make numbers format beautiful.
+    // @todo Maybe there is a better way to apply format to numbers.
+    $format_fields = [
+      'beginning_balance',
+      'scheduled_payment',
+      'extra_payment',
+      'total_payment',
+      'principal',
+      'interest',
+      'ending_balance',
+      'cumulative_interest',
+    ];
+
+    foreach ($payments_data['payments_data'] as $key => $row) {
+      foreach ($row as $field_key => $field_value) {
+        if (in_array($field_key, $format_fields)) {
+          $payments_data['payments_data'][$key][$field_key] = number_format($field_value, 2);
+        }
+      }
+    }
 
     // Actual Number of Payments.
-    $results['actual_number_of_payments'] = count($results['data']['payments_data']);
+    $results['actual_number_of_payments'] = count($payments_data['payments_data']);
+
+    // Include payment data if $payments = TRUE.
+    if ($payments) {
+      $results['data'] = $payments_data;
+    }
+
+    // Total Early Payments (to have it in one results array).
+    $results['total_early_payments'] = number_format($payments_data['total_early_payments'], 2);
 
     // Total Interest.
-    $results['total_interest'] = end($results['data']['payments_data'])['cumulative_interest'];
+    $last_payment = end($payments_data['payments_data']);
+    $results['total_interest'] = $last_payment['cumulative_interest'];
 
     // Log this query to custom channel. @todo Log more information.
     $this->logger->notice('User (UID: @uid) made calculations for this loan amount: @loan_amount.', [
@@ -96,7 +129,6 @@ class CalculateService implements CalculateServiceInterface {
    */
   public static function calculateScheduledPayment($loan_period_in_years, $number_of_payments_per_year, $interest, $loan_amount) {
     $months = $loan_period_in_years * $number_of_payments_per_year;
-
     return self::calculatePmt($interest, $months, $loan_amount);
   }
 
@@ -116,8 +148,7 @@ class CalculateService implements CalculateServiceInterface {
    */
   public static function calculatePmt($interest, $months, $loan) {
     $amount = $interest * -$loan * pow((1 + $interest), $months) / (1 - pow((1 + $interest), $months));
-
-    return static::round_up($amount, 2);
+    return $amount;
   }
 
   /**
@@ -149,24 +180,28 @@ class CalculateService implements CalculateServiceInterface {
 
     // Calculations for all data rows.
     while ($balance > 0) {
-      $total_payment = $params['scheduled_payment'] + $params['optional_extra_payments'];
-      $end_interest = static::round_up($balance * $params['interest'], 2);
-      $principal = static::round_up($total_payment - $end_interest, 2);
-
+      $end_interest = $balance * $params['interest'];
       $extra_payment = $params['optional_extra_payments'];
 
       $ending_balance = 0;
 
+      $last_extra_payment = $balance - $params['scheduled_payment'];
+
       // If Sched_Pay+Scheduled_Extra_Payments<Beg_Bal.
       if (($params['scheduled_payment'] + $params['optional_extra_payments']) < $balance) {
-        // If Beg_Bal-Sched_Pay>0.
-        if (($balance - $params['scheduled_payment']) > 0) {
+        $total_payment = $params['scheduled_payment'] + $params['optional_extra_payments'];
+        $principal = $total_payment - $end_interest;
+
+        if (($last_extra_payment > 0)) {
           $extra_payment = $params['optional_extra_payments'];
         }
-        $ending_balance = static::round_up($balance - $principal, 2);
+
+        $ending_balance = $balance - $principal;
       }
       else {
-        $extra_payment = 0;
+        $total_payment = $balance;
+        $principal = $total_payment - $end_interest;
+        $extra_payment = max($last_extra_payment, 0);
       }
 
       // Not a first loop.
@@ -176,11 +211,12 @@ class CalculateService implements CalculateServiceInterface {
       }
       else {
         $cumulative_interest = $end_interest;
+        $data['total_early_payments'] = 0;
       }
 
       $data['payments_data'][$i] = [
         'no' => $i,
-        'payment_date' => $payment_date[$i]->format('Y-m-d'),
+        'payment_date' => $payment_date[$i]->format('d/m/Y'),
         'beginning_balance' => $balance,
         'scheduled_payment' => $params['scheduled_payment'],
         'extra_payment' => $extra_payment,
@@ -198,21 +234,5 @@ class CalculateService implements CalculateServiceInterface {
     }
 
     return $data;
-  }
-
-  /**
-   * Excel-like ROUNDUP function.
-   *
-   * @param $value
-   * @param $places
-   *
-   * @return float|int
-   */
-  public static function round_up($value, $places)
-  {
-    $mult = pow(10, abs($places));
-    return $places < 0 ?
-      ceil($value / $mult) * $mult :
-      ceil($value * $mult) / $mult;
   }
 }
